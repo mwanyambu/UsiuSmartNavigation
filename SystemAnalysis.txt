@@ -1,0 +1,195 @@
+USIU-AFRICA SMARTNAV WEB APPLICATION
+System Analysis and Design (SAD)
+
+1. System Overview
+The USIU SMARTNAV Web Application is an open-access, web-based system designed to help students and visitors navigate the campus efficiently. It provides directions to classrooms, offices, amenities, and helps drivers find parking lots and self-manage parking occupancy.
+There is no user login — any user can access navigation and parking services anonymously through any modern browser.
+
+2. System Context
+Users:
+Students (walking or driving)
+
+
+Visitors (walking or driving)
+
+
+System Administrator (for backend map/parking data maintenance — secured separately)
+
+
+External Resources:
+OpenStreetMap tiles and routing.
+
+
+University’s parking lot data maintained in the backend.
+
+
+Internal building and resource database.
+
+
+
+3. Functional Requirements
+ID
+Description
+FR-01
+View interactive campus map.
+FR-02
+Search for classrooms, offices, or amenities.
+FR-03
+Get walking or driving directions across campus buildings.
+FR-04
+For drivers: view available parking slots per lot.
+FR-05
+Register parking on arrival (decrease available slots).
+FR-06
+Deregister parking on exit (increase available slots).
+FR-07
+Admin updates building data, amenities, and parking lot capacity.
+
+
+4. Non-Functional Requirements
+Accessibility: Open access, no logins required.
+
+
+Performance: Map loads within 2–3 seconds.
+
+
+Scalability: Can handle peak traffic at semester start.
+
+
+Security: No personal data storage. Admin backend protected by secure access.
+
+
+Maintainability: Modular structure (Frontend: React + LeafletJS/OpenLayers, Backend: Django REST).
+
+
+Privacy: No tracking of user identity or behavior.
+
+
+
+5. System Architecture
+▶ Frontend:
+Web-based, mobile-friendly UI.
+
+
+Renders OpenStreetMap using LeafletJS or OpenLayers.
+
+
+Shows custom overlays for buildings, amenities, parking zones.
+
+
+Provides simple forms for parking register/deregister.
+
+
+▶ Backend:
+Django REST API exposes:
+
+
+Location data
+
+
+Parking lot status
+
+
+Basic routes to handle parking registrations
+
+
+Stores:
+
+
+Building data
+
+
+Parking lot capacity & real-time availability
+
+
+Admin panel for updating map data.
+
+
+▶ Database:
+PostgreSQL + PostGIS for spatial queries and geo-coordinates.
+
+
+▶ Hosting:
+University server or affordable cloud (AWS EC2 + RDS).
+
+
+
+6. Data Flow (DFD Summary)
+Context Level:
+User requests → Navigation Module → OSM → Route/Directions
+
+
+Driver → Parking Module → Register/Deregister → DB → Update availability
+
+
+Admin → Admin Panel → CRUD operations → DB → Updates map overlays.
+
+
+
+7. Risk Analysis
+Risk
+Impact
+Likelihood
+Mitigation
+Open Access Abuse: malicious automated spamming of parking slots.
+High
+Medium
+Implement CAPTCHA or rate limiting on Register/Deregister API.
+Incorrect Parking Info: users forget to deregister, leading to false full lots.
+Medium
+High
+Add auto-expiry: slots auto-release after X hours if not deregistered.
+Data Accuracy: outdated building locations or renamed offices.
+Medium
+Medium
+Require periodic admin reviews each semester.
+OSM Downtime: dependency on external map server.
+Medium
+Low
+Host local OSM tiles as fallback.
+No Authentication: means anyone can access.
+Low
+Acceptable — by design for ease of use.
+
+
+Browser Compatibility: older browsers may not support Leaflet features.
+Low
+Low
+Use polyfills and test across major browsers.
+
+
+8. Future Enhancements
+Integrate QR Code Check-in/out for parking.
+
+
+Add real-time GPS positioning (optional, consent-based).
+
+
+Add multilingual support.
+
+
+Extend to mobile native app if adoption grows.
+
+
+
+9. Conclusion
+The USIU SMARTNAV Web Application is a lightweight, privacy-respecting, open-access solution to campus navigation and parking problems, designed to be cost-effective and scalable by leveraging OpenStreetMap and simple self-reporting logic for parking slots.
+
+10. Key Tools
+Layer
+Tool
+Maps
+OpenStreetMap + LeafletJS
+Backend
+Django REST API
+Database
+PostgreSQL + PostGIS
+Versioning
+GitHub
+
+
+
+
+
+
+
