@@ -13,6 +13,8 @@ urlpatterns = [
     path('ors-proxy/', views.ORSProxyView.as_view(), name='ors-proxy'),
     path('get-csrf-token/', views.get_csrf_token, name='get-csrf-token'),
     path('parking/active-sessions/', views.active_sessions, name='active-sessions'),
-    
+    path('indoor-navigation/', views.IndoorNavigationView.as_view(), name='indoor-navigation'),
+    path('indoor-path-graph/', views.indoor_path_graph, name='indoor-path-graph'),
+    path("indoor-path/dijkstra/", views.dijkstra_path, name="dijkstra_path"),
 
 ]

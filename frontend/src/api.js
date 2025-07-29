@@ -30,6 +30,9 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+export const getIndoorNavigationPath = (startRoomId, endRoomId) => {
+  return api.get(`/indoor-navigation/?start_room_id=${startRoomId}&end_room_id=${endRoomId}`);
+};
 
 
 /* export const api = axios.create({

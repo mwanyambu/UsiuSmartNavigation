@@ -73,3 +73,22 @@ class ParkingSession(models.Model):
 
     def __str__(self):
         return f"{self.parking_lot.name} - {self.session_id}"
+
+class PathNode(models.Model):
+    room = models.OneToOneField(Room, on_delete=models.CASCADE, null=True, blank=True, related_name='path_node')
+    floor = models.ForeignKey(Floor, on_delete=models.CASCADE, related_name='path_nodes')
+    node_type = models.CharField(max_length=50, choices=[('room', 'Room'), ('hallway', 'Hallway'), ('stairs', 'Stairs'), ('elevator', 'Elevator')])
+    geom = models.PointField()
+
+    def __str__(self):
+        if self.room:
+            return f'Node for Room: {self.room.name} on {self.floor}'
+        return f'Node {self.id} ({self.get_node_type_display()}) on {self.floor}'
+
+class PathEdge(models.Model):
+    start_node = models.ForeignKey(PathNode, on_delete=models.CASCADE, related_name='outgoing_edges')
+    end_node = models.ForeignKey(PathNode, on_delete=models.CASCADE, related_name='incoming_edges')
+    distance = models.FloatField(help_text='Distance in meters')
+
+    def __str__(self):
+        return f'Edge from Node {self.start_node.id} to Node {self.end_node.id}'

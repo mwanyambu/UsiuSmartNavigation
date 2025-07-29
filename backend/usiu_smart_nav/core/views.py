@@ -2,7 +2,7 @@ from rest_framework import generics
 import requests
 from rest_framework.response import Response
 from rest_framework import status
-from .models import Location, Amenity, ParkingLot, Building, Floor, Room, ParkingSession
+from .models import Location, Amenity, ParkingLot, Building, Floor, Room, ParkingSession, PathNode, PathEdge
 from .serializers import LocationSerializer, AmenitySerializer, ParkingLotSerializer, BuildingSerializer, FloorSerializer, RoomSerializer, ParkingSessionSerializer
 from django.db import transaction
 from django.db.models import F
@@ -17,6 +17,10 @@ from django.views.decorators.csrf import ensure_csrf_cookie
 from rest_framework.permissions import AllowAny
 from django_ratelimit.decorators import ratelimit
 import uuid
+import networkx as nx
+from django.contrib.gis.geos import LineString
+from django.http import JsonResponse
+from django.views.decorators.http import require_GET
 
 class LocationList(generics.ListAPIView):
     queryset = Location.objects.all()
@@ -195,3 +199,114 @@ def deregister_parking(request, pk):
         'message': f'Deregistered from {parking_lot.name}',
         'available': parking_lot.available_slots
     }, status=200)
+
+class IndoorNavigationView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request, *args, **kwargs):
+        start_room_id = request.query_params.get('start_room_id')
+        end_room_id = request.query_params.get('end_room_id')
+
+        if not start_room_id or not end_room_id:
+            return Response({'error': 'start_room_id and end_room_id are required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            start_node = PathNode.objects.get(room__id=start_room_id)
+            end_node = PathNode.objects.get(room__id=end_room_id)
+        except PathNode.DoesNotExist:
+            return Response({'error': 'Start or end room not found in the navigation network.'}, status=status.HTTP_404_NOT_FOUND)
+
+        graph = nx.Graph()
+        nodes = PathNode.objects.all()
+        edges = PathEdge.objects.all()
+
+        for node in nodes:
+            graph.add_node(node.id, pos=(node.geom.x, node.geom.y))
+
+        for edge in edges:
+            graph.add_edge(edge.start_node.id, edge.end_node.id, weight=edge.distance)
+
+        try:
+            path = nx.astar_path(graph, start_node.id, end_node.id, weight='weight')
+            path_nodes = PathNode.objects.filter(id__in=path)
+            ordered_path_nodes = sorted(path_nodes, key=lambda n: path.index(n.id))
+            line_path = LineString([node.geom for node in ordered_path_nodes], srid=4326)
+
+            return Response({'path': line_path.geojson})
+        except nx.NetworkXNoPath:
+            return Response({'error': 'No path found between the specified rooms.'}, status=status.HTTP_404_NOT_FOUND)
+
+
+@api_view(['GET'])
+def indoor_path_graph(request):
+    floor_id = request.GET.get('floor')
+
+    nodes_qs = PathNode.objects.all()
+    edges_qs = PathEdge.objects.select_related('start_node', 'end_node')
+
+    if floor_id:
+        nodes_qs = nodes_qs.filter(floor_id=floor_id)
+        edges_qs = edges_qs.filter(start_node__floor_id=floor_id, end_node__floor_id=floor_id)
+
+    nodes = [{
+        "id": node.id,
+        "type": node.node_type,
+        "lat": node.geom.y,
+        "lng": node.geom.x
+    } for node in nodes_qs]
+
+    edges = [{
+        "id": edge.id,
+        "from": edge.start_node.id,
+        "to": edge.end_node.id,
+        "distance": edge.distance
+    } for edge in edges_qs]
+
+    return Response({"nodes": nodes, "edges": edges})
+
+
+@require_GET
+def dijkstra_path(request):
+    try:
+        start_id = int(request.GET.get("start"))
+        end_id = int(request.GET.get("end"))
+    except (TypeError, ValueError):
+        return JsonResponse({"error": "Invalid start or end node ID"}, status=400)
+
+    nodes = {node.id: node for node in PathNode.objects.all()}
+    edges = {}
+
+    for edge in PathEdge.objects.all():
+        edges.setdefault(edge.start_node_id, []).append((edge.end_node_id, edge.distance))
+        edges.setdefault(edge.end_node_id, []).append((edge.start_node_id, edge.distance))
+
+    # Dijkstra
+    import heapq
+    queue = [(0, start_id)]
+    visited = set()
+    prev = {}
+
+    while queue:
+        cost, current = heapq.heappop(queue)
+        if current in visited:
+            continue
+        visited.add(current)
+        if current == end_id:
+            break
+        for neighbor, dist in edges.get(current, []):
+            if neighbor not in visited:
+                heapq.heappush(queue, (cost + dist, neighbor))
+                if neighbor not in prev or cost + dist < prev[neighbor][0]:
+                    prev[neighbor] = (cost + dist, current)
+
+    # Backtrack path
+    if end_id not in prev:
+        return JsonResponse({"error": "No path found"}, status=404)
+
+    path_ids = [end_id]
+    while path_ids[-1] != start_id:
+        path_ids.append(prev[path_ids[-1]][1])
+    path_ids.reverse()
+
+    coords = [[nodes[n].geom.y, nodes[n].geom.x] for n in path_ids]
+    return JsonResponse({"path": coords})

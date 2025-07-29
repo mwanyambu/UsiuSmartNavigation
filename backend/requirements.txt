@@ -1,0 +1,11 @@
+Django
+djangorestframework
+djangorestframework-gis
+psycopg2-binary
+requests
+django-leaflet
+django-cors-headers
+gunicorn
+python-dotenv
+networkx
+django-ratelimit
