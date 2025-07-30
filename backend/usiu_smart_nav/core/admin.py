@@ -1,11 +1,41 @@
 from django.contrib.gis import admin
 from leaflet.admin import LeafletGeoAdmin
-from .models import Building, Room, ParkingLot, Location, Amenity, Floor, PathNode, PathEdge, ParkingSession
+from .models import Building, Room, ParkingLot, Location, Amenity, Floor, PathNode, PathEdge, ParkingSession, EntryPoint
+
+
+class EntryPointInline(admin.TabularInline):
+    model = EntryPoint
+    extra = 1
+    fields = ('name', 'entry_type', 'is_main', 'is_accessible', 'is_24_7', 'opening_hours')
 
 
 @admin.register(Building)
 class BuildingAdmin(LeafletGeoAdmin):
-    list_display = ('id', 'name')
+    list_display = ('id', 'name', 'entry_count')
+    inlines = [EntryPointInline]
+    
+    def entry_count(self, obj):
+        return obj.entry_points.count()
+    entry_count.short_description = 'Entry Points'
+
+
+@admin.register(EntryPoint)
+class EntryPointAdmin(LeafletGeoAdmin):
+    list_display = ('id', 'building', 'name', 'entry_type', 'is_main', 'is_accessible', 'is_24_7')
+    list_filter = ('entry_type', 'is_main', 'is_accessible', 'is_24_7', 'building')
+    search_fields = ('name', 'building__name')
+    fieldsets = (
+        ('Basic Information', {
+            'fields': ('building', 'name', 'entry_type', 'geom')
+        }),
+        ('Access Settings', {
+            'fields': ('is_main', 'is_accessible', 'is_24_7', 'opening_hours')
+        }),
+        ('Additional Details', {
+            'fields': ('description',),
+            'classes': ('collapse',)
+        })
+    )
 
 @admin.register(Room)
 class RoomAdmin(LeafletGeoAdmin):

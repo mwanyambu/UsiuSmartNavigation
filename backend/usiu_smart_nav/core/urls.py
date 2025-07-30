@@ -6,6 +6,7 @@ urlpatterns = [
     path('amenities/', views.AmenityList.as_view(), name='amenity-list'),
     path('parking-lots/', views.ParkingLotList.as_view(), name='parking-lot-list'),
     path('buildings/', views.BuildingList.as_view(), name='building-list'),
+    path('entry-points/', views.EntryPointList.as_view(), name='entry-point-list'),
     path('floors/', views.FloorList.as_view(), name='floor-list'),
     path('rooms/', views.RoomList.as_view(), name='room-list'),
     path('parking/register/<int:pk>/', views.register_parking, name='register_parking'),

@@ -36,6 +36,48 @@ class Building(models.Model):
     def __str__(self):
         return self.name
 
+    @property
+    def main_entry_point(self):
+        """Get the main entry point for this building"""
+        main_entry = self.entry_points.filter(is_main=True).first()
+        if main_entry:
+            return main_entry.geom
+        # Fallback to building centroid if no entry points defined
+        return self.geom.centroid
+
+class EntryPoint(models.Model):
+    """Precise entry points for buildings"""
+    ENTRY_TYPES = [
+        ('main', 'Main Entrance'),
+        ('side', 'Side Entrance'),
+        ('back', 'Back Entrance'),
+        ('emergency', 'Emergency Exit'),
+        ('service', 'Service Entrance'),
+        ('accessible', 'Accessible Entrance'),
+    ]
+    
+    building = models.ForeignKey(Building, on_delete=models.CASCADE, related_name='entry_points')
+    name = models.CharField(max_length=100, help_text="e.g., 'Main Entrance', 'North Door'")
+    entry_type = models.CharField(max_length=20, choices=ENTRY_TYPES, default='main')
+    geom = models.PointField(help_text="Precise coordinates of the entry point")
+    is_main = models.BooleanField(default=False, help_text="Is this the main entrance?")
+    is_accessible = models.BooleanField(default=True, help_text="Is this entrance wheelchair accessible?")
+    is_24_7 = models.BooleanField(default=True, help_text="Is this entrance available 24/7?")
+    opening_hours = models.CharField(max_length=100, blank=True, help_text="e.g., '08:00-17:00' if not 24/7")
+    description = models.TextField(blank=True, help_text="Additional details about this entrance")
+    
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['building'], 
+                condition=models.Q(is_main=True),
+                name='unique_main_entrance_per_building'
+            )
+        ]
+    
+    def __str__(self):
+        return f"{self.building.name} - {self.name}"
+
 class Floor(models.Model):
     building = models.ForeignKey(Building, on_delete=models.CASCADE)
     level = models.IntegerField()
@@ -58,6 +100,7 @@ class ParkingSession(models.Model):
     device_id = models.UUIDField(default=uuid.UUID('00000000-0000-0000-0000-000000000000'))
     start_time = models.DateTimeField(default=timezone.now)
     end_time = models.DateTimeField(null=True, blank=True)
+    used_reserved_slot = models.BooleanField(default=False)
 
     class Meta:
         indexes = [

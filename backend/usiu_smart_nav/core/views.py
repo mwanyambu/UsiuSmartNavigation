@@ -2,8 +2,8 @@ from rest_framework import generics
 import requests
 from rest_framework.response import Response
 from rest_framework import status
-from .models import Location, Amenity, ParkingLot, Building, Floor, Room, ParkingSession, PathNode, PathEdge
-from .serializers import LocationSerializer, AmenitySerializer, ParkingLotSerializer, BuildingSerializer, FloorSerializer, RoomSerializer, ParkingSessionSerializer
+from .models import Location, Amenity, ParkingLot, Building, Floor, Room, ParkingSession, PathNode, PathEdge, EntryPoint
+from .serializers import LocationSerializer, AmenitySerializer, ParkingLotSerializer, BuildingSerializer, FloorSerializer, RoomSerializer, ParkingSessionSerializer, EntryPointSerializer
 from django.db import transaction
 from django.db.models import F
 from rest_framework.decorators import api_view
@@ -51,6 +51,18 @@ class FloorList(generics.ListAPIView):
 class RoomList(generics.ListAPIView):
     queryset = Room.objects.all()
     serializer_class = RoomSerializer
+
+
+class EntryPointList(generics.ListAPIView):
+    queryset = EntryPoint.objects.all()
+    serializer_class = EntryPointSerializer
+    
+    def get_queryset(self):
+        queryset = EntryPoint.objects.all()
+        building_id = self.request.query_params.get('building', None)
+        if building_id is not None:
+            queryset = queryset.filter(building=building_id)
+        return queryset
 
 @method_decorator(csrf_exempt, name='dispatch')
 class ORSProxyView(APIView):
@@ -127,13 +139,9 @@ def register_parking(request, pk):
     if use_reserved:
         if parking_lot.reserved_slots <= 0:
             return Response({'error': 'No reserved slots available'}, status=400)
-        parking_lot.reserved_slots -= 1
     else:
         if parking_lot.available_slots <= 0:
             return Response({'error': 'No general slots available'}, status=400)
-        parking_lot.available_slots -= 1
-
-    parking_lot.save()
 
     # Check if the device has any active session across all parking lots.
     any_active_session = ParkingSession.objects.filter(
@@ -146,11 +154,16 @@ def register_parking(request, pk):
 
     session = ParkingSession.objects.create(
         device_id=device_id,
-        parking_lot=parking_lot
+        parking_lot=parking_lot,
+        used_reserved_slot=use_reserved
     )
 
-    # Atomically decrement the slot count and refresh the object to get the new value
-    ParkingLot.objects.filter(pk=pk).update(available_slots=F('available_slots') - 1)
+    # Atomically decrement the appropriate slot count
+    if use_reserved:
+        ParkingLot.objects.filter(pk=pk).update(reserved_slots=F('reserved_slots') - 1)
+    else:
+        ParkingLot.objects.filter(pk=pk).update(available_slots=F('available_slots') - 1)
+    
     parking_lot.refresh_from_db()
 
     return Response({
@@ -191,8 +204,12 @@ def deregister_parking(request, pk):
     session.save()
 
     parking_lot = session.parking_lot
-    # Atomically increment the slot count and refresh the object to get the new value
-    ParkingLot.objects.filter(pk=parking_lot.pk).update(available_slots=F('available_slots') + 1)
+    # Atomically increment the appropriate slot count based on what was originally used
+    if session.used_reserved_slot:
+        ParkingLot.objects.filter(pk=parking_lot.pk).update(reserved_slots=F('reserved_slots') + 1)
+    else:
+        ParkingLot.objects.filter(pk=parking_lot.pk).update(available_slots=F('available_slots') + 1)
+    
     parking_lot.refresh_from_db()
 
     return Response({

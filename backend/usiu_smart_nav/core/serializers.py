@@ -1,5 +1,5 @@
 from rest_framework_gis.serializers import GeoFeatureModelSerializer
-from .models import Location, Amenity, ParkingLot, Building, Floor, Room, ParkingSession
+from .models import Location, Amenity, ParkingLot, Building, Floor, Room, ParkingSession, EntryPoint
 from rest_framework import serializers
 
 class LocationSerializer(GeoFeatureModelSerializer):
@@ -49,3 +49,13 @@ class ParkingSessionSerializer(serializers.ModelSerializer):
     class Meta:
         model = ParkingSession
         fields = ('session_id', 'parking_lot', 'device_id', 'start_time', 'end_time')
+
+
+class EntryPointSerializer(GeoFeatureModelSerializer):
+    building_name = serializers.CharField(source='building.name', read_only=True)
+    
+    class Meta:
+        model = EntryPoint
+        geo_field = "geom"
+        fields = ('id', 'building', 'building_name', 'name', 'entry_type', 'is_main', 
+                 'is_accessible', 'is_24_7', 'opening_hours', 'description')

@@ -144,6 +144,7 @@ function App() {
   const [selectedStartNode, setSelectedStartNode] = useState(null);
   const [selectedEndNode, setSelectedEndNode] = useState(null);
   const [indoorPathCoords, setIndoorPathCoords] = useState([]);
+  const [entryPoints, setEntryPoints] = useState([]);
 
   const showApiMessage = (data) => {
     if (data.error) alert(`Error: ${data.error}`);
@@ -184,7 +185,7 @@ function App() {
   useEffect(() => {
     if (!selectedBuilding || !Number.isInteger(selectedFloor)) return;
 
-    api.get(`/indoor-paths/?floor=${selectedFloor}`)
+    api.get(`/indoor-path-graph/?floor=${selectedFloor}`)
       .then(res => {
         const nodes = res.data?.nodes ?? [];
         const edges = res.data?.edges ?? [];
@@ -288,19 +289,22 @@ function App() {
   useEffect(() => {
     const fetchDataAndSetBounds = async () => {
       try {
-        const [buildingsRes, roomsRes, parkingLotsRes] = await Promise.all([
+        const [buildingsRes, roomsRes, parkingLotsRes, entryPointsRes] = await Promise.all([
           api.get('/buildings/'),
           api.get('/rooms/'),
           api.get('/parking-lots/'),
+          api.get('/entry-points/'),
         ]);
 
         const buildingsData = buildingsRes.data.features;
         const roomsData = roomsRes.data.features;
         const parkingLotsData = parkingLotsRes.data.features;
+        const entryPointsData = entryPointsRes.data.features;
 
         setBuildings(buildingsData);
         setRooms(roomsData);
         setParkingLots(parkingLotsData);
+        setEntryPoints(entryPointsData);
 
         const allFeatures = [...buildingsData, ...parkingLotsData];
         if (allFeatures.length > 0) {
@@ -420,13 +424,21 @@ function App() {
 
     api.get(`/indoor-path/dijkstra/?start=${selectedStartNode}&end=${selectedEndNode}`)
       .then(res => {
-        const geojson = JSON.parse(res.data.path);
-        const leafletCoords = geojson.coordinates.map(([lng, lat]) => [lat, lng]);
-        setIndoorPathCoords(leafletCoords);
+        console.log('Dijkstra response:', res.data);
+        
+        if (res.data.path && Array.isArray(res.data.path)) {
+          // Backend returns [[lat, lng], [lat, lng], ...] format
+          // No conversion needed for Leaflet which expects [lat, lng]
+          setIndoorPathCoords(res.data.path);
+        } else {
+          console.error("No valid path array found in response:", res.data);
+          alert("Invalid path data received from server.");
+        }
       })
       .catch(err => {
         console.error("Dijkstra error:", err);
-        alert("No route found.");
+        const errorMsg = err.response?.data?.error || "Failed to find indoor path.";
+        alert(`Error: ${errorMsg}`);
       });
   }, [selectedStartNode, selectedEndNode]);
 
@@ -506,6 +518,8 @@ function App() {
 
   const handleDestinationSelect = (name) => {
     const searchTerm = name.toLowerCase();
+    
+    // First, check for room matches
     const roomMatch = rooms.find(r =>
       r.properties.name?.toLowerCase() === searchTerm && r.geometry.type === 'Point'
     );
@@ -515,46 +529,63 @@ function App() {
       setEnd(L.latLng(lat, lng));
       setSelectedBuilding(null);
       setSelectedFloor('');
+      console.log(`🎯 Navigating to room: ${roomMatch.properties.name}`);
       return;
     }
 
-    const otherTargets = travelMode === 'car'
-      ? [...buildings, ...parkingLots]
-      : buildings;
-
-    const match = otherTargets.find(f =>
-      f?.properties?.name?.toLowerCase() === searchTerm
+    // Check for building matches and ALWAYS use entry points
+    const buildingMatch = buildings.find(b =>
+      b?.properties?.name?.toLowerCase() === searchTerm
     );
 
-    if (!match || !match.geometry) {
-      alert('Location not found or missing geometry');
+    if (buildingMatch) {
+      // Find the main entry point for this building
+      const mainEntry = entryPoints.find(ep => 
+        ep.properties.building === buildingMatch.id && ep.properties.is_main
+      );
+      
+      if (mainEntry) {
+        // Use the main entry point coordinates - PRECISE NAVIGATION
+        const [lng, lat] = mainEntry.geometry.coordinates;
+        setEnd(L.latLng(lat, lng));
+        console.log(`🎯 PRECISE: Using main entry point for ${buildingMatch.properties.name}:`, { lat, lng });
+        return;
+      }
+      
+      // Fallback to any entry point for this building
+      const anyEntry = entryPoints.find(ep => 
+        ep.properties.building === buildingMatch.id
+      );
+      
+      if (anyEntry) {
+        const [lng, lat] = anyEntry.geometry.coordinates;
+        setEnd(L.latLng(lat, lng));
+        console.log(`🎯 PRECISE: Using entry point for ${buildingMatch.properties.name}:`, { lat, lng });
+        return;
+      }
+      
+      // If no entry points exist, alert the user instead of using building center
+      alert(`❌ No entry points defined for ${buildingMatch.properties.name}. Please contact admin to add precise entry points.`);
+      console.error(`No entry points found for building: ${buildingMatch.properties.name}`);
       return;
     }
 
-    let lat, lng;
-    const { type, coordinates } = match.geometry;
-
-    if (type === 'Point') {
-      [lng, lat] = coordinates;
-    } else if (type === 'Polygon') {
-      const coords = coordinates[0];
-      const bounds = L.latLngBounds(coords.map(([x, y]) => [y, x]));
-      const center = bounds.getCenter();
-      lat = center.lat;
-      lng = center.lng;
-    } else if (type === 'MultiPolygon') {
-      const coords = coordinates[0][0];
-      const bounds = L.latLngBounds(coords.map(([x, y]) => [y, x]));
-      const center = bounds.getCenter();
-      lat = center.lat;
-      lng = center.lng;
+    // Handle parking lots for car travel mode
+    if (travelMode === 'car') {
+      const parkingMatch = parkingLots.find(p =>
+        p?.properties?.name?.toLowerCase() === searchTerm
+      );
+      
+      if (parkingMatch && parkingMatch.geometry) {
+        const [lng, lat] = parkingMatch.geometry.coordinates;
+        setEnd(L.latLng(lat, lng));
+        console.log(`🎯 Navigating to parking: ${parkingMatch.properties.name}`);
+        return;
+      }
     }
 
-    if (lat && lng) {
-      setEnd(L.latLng(lat, lng));
-    } else {
-      alert('Unsupported geometry type or coordinates');
-    }
+    // If nothing found
+    alert(`❌ Location "${name}" not found. Please check the spelling or select from the dropdown suggestions.`);
   };
 
   const handleIndoorNavigate = () => {
@@ -562,13 +593,24 @@ function App() {
       alert('Please select a start and end room.');
       return;
     }
+    
+    console.log('Finding path between rooms:', startRoom, 'and', endRoom);
+    
     getIndoorNavigationPath(startRoom, endRoom)
       .then(res => {
-        setIndoorPath(res.data.path);
+        console.log('Indoor navigation response:', res.data);
+        
+        if (res.data && res.data.path) {
+          setIndoorPath(res.data.path);
+        } else {
+          console.error("No path data in response:", res.data);
+          alert("No path data received from server.");
+        }
       })
       .catch(err => {
         console.error('Indoor navigation error:', err);
-        alert('Failed to find an indoor path.');
+        const errorMsg = err.response?.data?.error || err.message || 'Failed to find an indoor path.';
+        alert(`Error: ${errorMsg}`);
       });
   };
   const schoolCardStyle = {
@@ -593,14 +635,41 @@ function App() {
 
   useEffect(() => {
     if (map && indoorPath) {
-      if (indoorPathLayerRef.current) {
-        map.removeLayer(indoorPathLayerRef.current);
+      try {
+        if (indoorPathLayerRef.current) {
+          map.removeLayer(indoorPathLayerRef.current);
+          indoorPathLayerRef.current = null;
+        }
+        
+        // Parse GeoJSON string if needed
+        let geoJsonData = indoorPath;
+        if (typeof indoorPath === 'string') {
+          try {
+            geoJsonData = JSON.parse(indoorPath);
+          } catch (parseError) {
+            console.error("Failed to parse GeoJSON string:", parseError);
+            alert("Invalid GeoJSON format received.");
+            return;
+          }
+        }
+        
+        // Validate that geoJsonData is valid GeoJSON
+        if (!geoJsonData || !geoJsonData.type) {
+          console.error("Invalid GeoJSON format:", geoJsonData);
+          alert("Invalid path format received.");
+          return;
+        }
+        
+        const layer = L.geoJSON(geoJsonData, {
+          style: { color: 'red', weight: 5 }
+        }).addTo(map);
+        
+        indoorPathLayerRef.current = layer;
+        map.fitBounds(layer.getBounds());
+      } catch (error) {
+        console.error("Error creating indoor path layer:", error);
+        alert("Failed to display indoor path on map.");
       }
-      const layer = L.geoJSON(indoorPath, {
-        style: { color: 'red', weight: 5 }
-      }).addTo(map);
-      indoorPathLayerRef.current = layer;
-      map.fitBounds(layer.getBounds());
     }
   }, [map, indoorPath]);
 
@@ -665,8 +734,18 @@ function App() {
           setEnd(null);
           setRouteInstructions([]);
           setIndoorPath(null);
+          setStartRoom('');
+          setEndRoom('');
+          setSelectedStartNode(null);
+          setSelectedEndNode(null);
+          setIndoorPathCoords([]);
           if (indoorPathLayerRef.current) {
             map.removeLayer(indoorPathLayerRef.current);
+            indoorPathLayerRef.current = null;
+          }
+          if (routeLayerRef.current) {
+            map.removeLayer(routeLayerRef.current);
+            routeLayerRef.current = null;
           }
           speechSynthesis.cancel();
         }}>Clear</button>
@@ -756,8 +835,11 @@ function App() {
           <button style={styles.button} onClick={handleIndoorNavigate}>Find Path</button>
           <button style={{...styles.button, backgroundColor: '#c0392b'}} onClick={() => {
             setIndoorPath(null);
+            setStartRoom('');
+            setEndRoom('');
             if (indoorPathLayerRef.current) {
               map.removeLayer(indoorPathLayerRef.current);
+              indoorPathLayerRef.current = null;
             }
           }}>Clear Path</button>
         </div>
@@ -786,7 +868,7 @@ function App() {
         <div style={{
           position: 'absolute',
           top: 0, left: 0, right: 0, bottom: 0,
-          backgroundImage: `url('https://imgix.bustle.com/inverse/c1/27/73/2b/c5c0/4de6/94bf/542fff9cc947/connected-devices-in-2016.png?w=1200&h=630&fit=crop&crop=faces&fm=jpg')`,
+          backgroundImage: `url('https://th.bing.com/th/id/R.6f1836e85e3e3d0bafd08ce4873317d5?rik=hjCyhPtZtx79wg&riu=http%3a%2f%2fcdn.wallpapersafari.com%2f3%2f97%2f3w7eaE.png&ehk=AFcA4tg4AIbES7fxsu0m51NmcXnm19fYUi8UxJoQbis%3d&risl=1&pid=ImgRaw&r=0')`,
           backgroundSize: 'cover',
           backgroundPosition: 'center',
           backgroundRepeat: 'no-repeat',
@@ -908,6 +990,45 @@ function App() {
                 style={{ color: usiuColors.royalBlue, weight: 2, fillOpacity: 0.1 }}
               />
             ))}
+            
+            {/* Entry Point Markers */}
+            {entryPoints.map(entryPoint => {
+              const isMain = entryPoint.properties.is_main;
+              const entryIcon = L.divIcon({
+                className: 'entry-point-icon',
+                html: `<div style="
+                  background-color: ${isMain ? '#e74c3c' : '#f39c12'};
+                  width: 10px;
+                  height: 10px;
+                  border-radius: 50%;
+                  border: 2px solid white;
+                  box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+                "></div>`,
+                iconSize: [14, 14],
+                iconAnchor: [7, 7]
+              });
+              
+              return (
+                <Marker
+                  key={`entry-${entryPoint.id}`}
+                  position={[entryPoint.geometry.coordinates[1], entryPoint.geometry.coordinates[0]]}
+                  icon={entryIcon}
+                >
+                  <Popup>
+                    <strong>{entryPoint.properties.name}</strong><br />
+                    Building: {entryPoint.properties.building_name}<br />
+                    Type: {entryPoint.properties.entry_type}<br />
+                    {isMain && <span style={{color: '#e74c3c', fontWeight: 'bold'}}>🚪 Main Entrance</span>}<br />
+                    {entryPoint.properties.is_accessible && <span style={{color: '#27ae60'}}>♿ Accessible</span>}<br />
+                    {entryPoint.properties.is_24_7 ? 
+                      <span style={{color: '#27ae60'}}>🕐 24/7 Access</span> : 
+                      <span style={{color: '#f39c12'}}>🕐 {entryPoint.properties.opening_hours || 'Limited Hours'}</span>
+                    }
+                  </Popup>
+                </Marker>
+              );
+            })}
+            
             {selectedBuilding && selectedFloor !== '' && (
               <>
                 {/* Room Markers */}
